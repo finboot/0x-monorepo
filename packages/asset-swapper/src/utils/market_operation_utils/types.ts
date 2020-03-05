@@ -57,10 +57,9 @@ export interface DexSample {
  * Flags for `Fill` objects.
  */
 export enum FillFlags {
-    SourceNative = 0x1,
-    SourceUniswap = 0x2,
-    SourceEth2Dai = 0x4,
-    SourceKyber = 0x8,
+    ConflictsWithKyber = 0x1,
+    Kyber = 0x2,
+    Knapsack = 0x4,
 }
 
 /**
@@ -69,9 +68,6 @@ export enum FillFlags {
 export interface Fill {
     // See `FillFlags`.
     flags: FillFlags;
-    // `FillFlags` that are incompatible with this fill, e.g., to prevent
-    // Kyber from mixing with Uniswap and Eth2Dai and vice versa.
-    exclusionMask: number;
     // Input fill amount (taker asset amount in a sell, maker asset amount in a buy).
     input: BigNumber;
     // Output fill amount (maker asset amount in a sell, taker asset amount in a buy).

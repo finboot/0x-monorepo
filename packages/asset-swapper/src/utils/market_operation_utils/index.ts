@@ -6,10 +6,12 @@ import { BigNumber } from '@0x/utils';
 import { constants } from '../../constants';
 import { MarketOperation, SignedOrderWithFillableAmounts } from '../../types';
 import { fillableAmountsUtils } from '../fillable_amounts_utils';
+import { utils } from '../utils';
 
 import { constants as marketOperationUtilConstants } from './constants';
 import { CreateOrderUtils } from './create_order';
 import { comparePathOutputs, FillsOptimizer, getPathAdjustedOutput, sortFillsByAdjustedRate } from './fill_optimizer';
+import { createFillPaths } from './fills';
 import { DexOrderSampler, getSampleAmounts } from './sampler';
 import {
     AggregationError,
@@ -37,18 +39,17 @@ const {
     ONE_ETHER,
     SELL_SOURCES,
 } = marketOperationUtilConstants;
+const { difference } = utils;
 
 export class MarketOperationUtils {
-    private readonly _createOrderUtils: CreateOrderUtils;
     private readonly _wethAddress: string;
 
     constructor(
         private readonly _sampler: DexOrderSampler,
-        contractAddresses: ContractAddresses,
+        private readonly contractAddresses: ContractAddresses,
         private readonly _orderDomain: OrderDomain,
     ) {
-        this._createOrderUtils = new CreateOrderUtils(contractAddresses);
-        this._wethAddress = contractAddresses.etherToken;
+        this._wethAddress = contractAddresses.etherToken.toLowerCase();
     }
 
     /**
@@ -72,9 +73,12 @@ export class MarketOperationUtils {
             ...opts,
         };
         const [makerToken, takerToken] = getOrderTokens(nativeOrders[0]);
+        // Call the sampler contract.
         const [fillableAmounts, ethToMakerAssetRate, dexQuotes] = await this._sampler.executeAsync(
+            // Get fillable amounts for native orders
             DexOrderSampler.ops.getOrderFillableTakerAmounts(nativeOrders),
-            makerToken.toLowerCase() === this._wethAddress.toLowerCase()
+            // Get ETH -> maker token price.
+            makerToken === this._wethAddress
                 ? DexOrderSampler.ops.constant(new BigNumber(1))
                 : DexOrderSampler.ops.getMedianSellRate(
                       difference(FEE_QUOTE_SOURCES, _opts.excludedSources),
@@ -82,6 +86,7 @@ export class MarketOperationUtils {
                       this._wethAddress,
                       ONE_ETHER,
                   ),
+            // Get sell quotes for taker -> maker.
             DexOrderSampler.ops.getSellQuotes(
                 difference(SELL_SOURCES, _opts.excludedSources),
                 makerToken,
@@ -89,48 +94,74 @@ export class MarketOperationUtils {
                 getSampleAmounts(takerAmount, _opts.numSamples, _opts.sampleDistributionBase),
             ),
         );
-        const nativeOrdersWithFillableAmounts = createSignedOrdersWithFillableAmounts(
-            nativeOrders,
-            fillableAmounts,
+        // Convert native orders and dex quotes into fill paths.
+        const paths = createFillPaths(
             MarketOperation.Sell,
-        );
-
-        const nativeFills = pruneNativeFills(
-            sortFillsByAdjustedRate(
-                createSellPathFromNativeOrders(nativeOrdersWithFillableAmounts, ethToMakerAssetRate, _opts),
+            // Augment native orders with their fillable amounts.
+            createSignedOrdersWithFillableAmounts(
+                MarketOperation.Sell,
+                nativeOrders,
+                fillableAmounts,
             ),
+            dexQuotes,
+            ethToMakerAssetRate,
             takerAmount,
-            _opts.dustFractionThreshold,
+            _opts,
         );
-        const dexPaths = createSellPathsFromDexQuotes(dexQuotes, ethToMakerAssetRate, _opts);
-        const allPaths = [...dexPaths];
-        const allFills = flattenDexPaths(dexPaths);
-        // If native orders are allowed, splice them in.
-        if (!_opts.excludedSources.includes(ERC20BridgeSource.Native)) {
-            allPaths.splice(0, 0, nativeFills);
-            allFills.splice(0, 0, ...nativeFills);
-        }
-
-        const optimizer = new FillsOptimizer(_opts.runLimit);
-        const upperBoundPath = pickBestUpperBoundPath(allPaths, takerAmount);
-        const optimalPath = optimizer.optimize(
-            // Sorting the orders by price effectively causes the optimizer to walk
-            // the greediest solution first, which is the optimal solution in most
-            // cases.
-            sortFillsByAdjustedRate(allFills),
-            takerAmount,
-            upperBoundPath,
-        );
-        if (!optimalPath) {
+        // Find the optimal path.
+        const path = findOptimalPath(MarketOperation.Sell, paths, _opts);
+        if (!path) {
             throw new Error(AggregationError.NoOptimalPath);
         }
-        return this._createOrderUtils.createSellOrdersFromPath(
-            this._orderDomain,
-            takerToken,
-            makerToken,
-            collapsePath(optimalPath, false),
-            _opts.bridgeSlippage,
-        );
+        // Find a fallback path from sources not used in the first path.
+        let fallbackPath = [];
+        if (_opts.allowFallback) {
+            fallbackPath = findOptimalPath(getFallbackPaths(
+                MarketOperation.Sell,
+                getUnusedSourcePaths(path, paths),
+                _opts,
+            )) || [];
+        }
+        return createOrdersFromPath([...path, ...fallbackPath], _opts);
+
+        // Create native fill paths.
+        // const nativeFills = pruneNativeFills(
+        //     sortFillsByAdjustedRate(
+        //         createSellPathFromNativeOrders(nativeOrdersWithFillableAmounts, ethToMakerAssetRate, _opts),
+        //     ),
+        //     takerAmount,
+        //     _opts.dustFractionThreshold,
+        // );
+        // // Create DEX fill paths.
+        // const dexPaths = createSellPathsFromDexQuotes(dexQuotes, ethToMakerAssetRate, _opts);
+        // const allPaths = [...dexPaths];
+        // const allFills = flattenDexPaths(dexPaths);
+        // // If native orders are allowed, splice them in.
+        // if (!_opts.excludedSources.includes(ERC20BridgeSource.Native)) {
+        //     allPaths.splice(0, 0, nativeFills);
+        //     allFills.splice(0, 0, ...nativeFills);
+        // }
+        //
+        // const optimizer = new FillsOptimizer(_opts.runLimit);
+        // const upperBoundPath = pickBestUpperBoundPath(allPaths, takerAmount);
+        // const optimalPath = optimizer.optimize(
+        //     // Sorting the orders by price effectively causes the optimizer to walk
+        //     // the greediest solution first, which is the optimal solution in most
+        //     // cases.
+        //     sortFillsByAdjustedRate(allFills),
+        //     takerAmount,
+        //     upperBoundPath,
+        // );
+        // if (!optimalPath) {
+        //     throw new Error(AggregationError.NoOptimalPath);
+        // }
+        // return this._createOrderUtils.createSellOrdersFromPath(
+        //     this._orderDomain,
+        //     takerToken,
+        //     makerToken,
+        //     collapsePath(optimalPath, false),
+        //     _opts.bridgeSlippage,
+        // );
     }
 
     /**
@@ -154,9 +185,12 @@ export class MarketOperationUtils {
             ...opts,
         };
         const [makerToken, takerToken] = getOrderTokens(nativeOrders[0]);
+        // Call the sampler contract.
         const [fillableAmounts, ethToTakerAssetRate, dexQuotes] = await this._sampler.executeAsync(
+            // Get native order fillable amounts.
             DexOrderSampler.ops.getOrderFillableMakerAmounts(nativeOrders),
-            takerToken.toLowerCase() === this._wethAddress.toLowerCase()
+            // Get ETH -> taker token price.
+            takerToken === this._wethAddress
                 ? DexOrderSampler.ops.constant(new BigNumber(1))
                 : DexOrderSampler.ops.getMedianSellRate(
                       difference(FEE_QUOTE_SOURCES, _opts.excludedSources),
@@ -164,6 +198,7 @@ export class MarketOperationUtils {
                       this._wethAddress,
                       ONE_ETHER,
                   ),
+            // Get buy quotes for taker -> maker.
             DexOrderSampler.ops.getBuyQuotes(
                 difference(BUY_SOURCES, _opts.excludedSources),
                 makerToken,
@@ -171,6 +206,7 @@ export class MarketOperationUtils {
                 getSampleAmounts(makerAmount, _opts.numSamples, _opts.sampleDistributionBase),
             ),
         );
+        // Call the sampler.
         const signedOrderWithFillableAmounts = this._createBuyOrdersPathFromSamplerResultIfExists(
             nativeOrders,
             makerAmount,
@@ -293,12 +329,15 @@ export class MarketOperationUtils {
     }
 }
 
+/**
+ * Augments native orders with fillable amounts and filters out unfillable orders.
+ */
 function createSignedOrdersWithFillableAmounts(
-    signedOrders: SignedOrder[],
-    fillableAmounts: BigNumber[],
     operation: MarketOperation,
+    orders: SignedOrder[],
+    fillableAmounts: BigNumber[],
 ): SignedOrderWithFillableAmounts[] {
-    return signedOrders
+    return orders
         .map((order: SignedOrder, i: number) => {
             const fillableAmount = fillableAmounts[i];
             const fillableMakerAssetAmount =
@@ -311,20 +350,15 @@ function createSignedOrdersWithFillableAmounts(
                     : orderCalculationUtils.getTakerFillAmount(order, fillableAmount);
             const fillableTakerFeeAmount = orderCalculationUtils.getTakerFeeAmount(order, fillableTakerAssetAmount);
             return {
+                ...order,
                 fillableMakerAssetAmount,
                 fillableTakerAssetAmount,
                 fillableTakerFeeAmount,
-                ...order,
             };
         })
         .filter(order => {
             return !order.fillableMakerAssetAmount.isZero() && !order.fillableTakerAssetAmount.isZero();
         });
-}
-
-// Gets the difference between two sets.
-function difference<T>(a: T[], b: T[]): T[] {
-    return a.filter(x => b.indexOf(x) === -1);
 }
 
 function createSellPathFromNativeOrders(
@@ -382,23 +416,6 @@ function createBuyPathFromNativeOrders(
         });
     }
     return path;
-}
-
-function pruneNativeFills(fills: Fill[], fillAmount: BigNumber, dustFractionThreshold: number): Fill[] {
-    const minInput = fillAmount.times(dustFractionThreshold);
-    const pruned = [];
-    let totalInput = ZERO_AMOUNT;
-    for (const fill of fills) {
-        if (totalInput.gte(fillAmount)) {
-            break;
-        }
-        if (fill.input.lt(minInput)) {
-            continue;
-        }
-        totalInput = totalInput.plus(fill.input);
-        pruned.push(fill);
-    }
-    return pruned;
 }
 
 function createSellPathsFromDexQuotes(
@@ -555,7 +572,7 @@ function getOrderTokens(order: SignedOrder): [string, string] {
     if (assets.some(a => a.assetProxyId !== ERC20_PROXY_ID)) {
         throw new Error(AggregationError.NotERC20AssetData);
     }
-    return assets.map(a => a.tokenAddress) as [string, string];
+    return assets.map(a => a.tokenAddress.toLowerCase()) as [string, string];
 }
 
 // tslint:disable: max-file-line-count

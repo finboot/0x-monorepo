@@ -104,4 +104,10 @@ export const utils = {
     isERC20EquivalentAssetData(assetData: AssetData): assetData is ERC20AssetData | ERC20BridgeAssetData {
         return assetDataUtils.isERC20TokenAssetData(assetData) || assetDataUtils.isERC20BridgeAssetData(assetData);
     },
+    /**
+     * Gets the difference between two sets.
+     */
+    difference<T>(a: T[], b: T[]): T[] {
+        return a.filter(x => b.indexOf(x) === -1);
+    },
 };
