@@ -2,7 +2,7 @@ import { IERC20BridgeSamplerContract } from '@0x/contract-wrappers';
 import { SignedOrder } from '@0x/types';
 import { BigNumber } from '@0x/utils';
 
-import { constants } from '../../constants';
+import { DEFAULT_CURVE_OPTS } from './constants';
 
 import { DexSample, ERC20BridgeSource } from './types';
 
@@ -200,8 +200,8 @@ const samplerOperations = {
                     batchedOperation = samplerOperations.getUniswapSellQuotes(makerToken, takerToken, takerFillAmounts);
                 } else if (source === ERC20BridgeSource.Kyber) {
                     batchedOperation = samplerOperations.getKyberSellQuotes(makerToken, takerToken, takerFillAmounts);
-                } else if (Object.keys(constants.DEFAULT_CURVE_OPTS).includes(source)) {
-                    const { curveAddress, tokens } = constants.DEFAULT_CURVE_OPTS[source];
+                } else if (Object.keys(DEFAULT_CURVE_OPTS).includes(source)) {
+                    const { curveAddress, tokens } = DEFAULT_CURVE_OPTS[source];
                     const fromTokenIdx = tokens.indexOf(takerToken);
                     const toTokenIdx = tokens.indexOf(makerToken);
                     if (fromTokenIdx !== -1 && toTokenIdx !== -1) {

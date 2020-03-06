@@ -22,7 +22,7 @@ import {
 import { assert } from './utils/assert';
 import { calculateLiquidity } from './utils/calculate_liquidity';
 import { DexOrderSampler, MarketOperationUtils } from './utils/market_operation_utils';
-import { dummyOrderUtils } from './utils/market_operation_utils/dummy_order_utils';
+import { createDummyOrderForSampler } from './utils/market_operation_utils/orders';
 import { orderPrunerUtils } from './utils/order_prune_utils';
 import { OrderStateUtils } from './utils/order_state_utils';
 import { ProtocolFeeUtils } from './utils/protocol_fee_utils';
@@ -256,7 +256,7 @@ export class SwapQuoter {
             );
             if (prunedOrders.length === 0) {
                 return [
-                    dummyOrderUtils.createDummyOrderForSampler(
+                    createDummyOrderForSampler(
                         makerAssetDatas[i],
                         takerAssetData,
                         this._contractAddresses.uniswapBridge,
@@ -529,7 +529,7 @@ export class SwapQuoter {
         // if no native orders, pass in a dummy order for the sampler to have required metadata for sampling
         if (prunedOrders.length === 0) {
             prunedOrders = [
-                dummyOrderUtils.createDummyOrderForSampler(
+                createDummyOrderForSampler(
                     makerAssetData,
                     takerAssetData,
                     this._contractAddresses.uniswapBridge,

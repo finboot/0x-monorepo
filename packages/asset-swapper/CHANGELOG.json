@@ -1,5 +1,22 @@
 [
     {
+        "version": "4.5.0",
+        "changes": [
+            {
+                "note": "Big refactor of market operation utils",
+                "pr": 2513
+            },
+            {
+                "note": "Revamp fill optimization algorithm",
+                "pr": 2513
+            },
+            {
+                "note": "Add fallback orders to quotes",
+                "pr": 2513
+            }
+        ]
+    },
+    {
         "version": "4.4.0",
         "changes": [
             {

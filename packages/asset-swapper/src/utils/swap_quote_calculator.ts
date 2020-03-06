@@ -19,10 +19,10 @@ import {
 
 import { fillableAmountsUtils } from './fillable_amounts_utils';
 import { MarketOperationUtils } from './market_operation_utils';
-import { CreateOrderUtils } from './market_operation_utils/create_order';
+import { convertNativeOrderToFullyFillableOptimizedOrders } from './market_operation_utils/orders';
 import { ERC20BridgeSource, OptimizedMarketOrder } from './market_operation_utils/types';
 import { ProtocolFeeUtils } from './protocol_fee_utils';
-import { utils } from './utils';
+import { isOrderTakerFeePayableWithMakerAsset, isOrderTakerFeePayableWithTakerAsset, isSupportedAssetDataInOrders } from './utils';
 
 // TODO(dave4506) How do we want to reintroduce InsufficientAssetLiquidityError?
 export class SwapQuoteCalculator {
@@ -129,7 +129,7 @@ export class SwapQuoteCalculator {
         opts: CalculateSwapQuoteOpts,
     ): Promise<SwapQuote> {
         // checks if maker asset is ERC721 or ERC20 and taker asset is ERC20
-        if (!utils.isSupportedAssetDataInOrders(prunedOrders)) {
+        if (!isSupportedAssetDataInOrders(prunedOrders)) {
             throw Error(SwapQuoterError.AssetDataUnsupported);
         }
         // since prunedOrders do not have fillState, we will add a buffer of fillable orders to consider that some native are orders are partially filled
@@ -151,7 +151,7 @@ export class SwapQuoteCalculator {
             if (firstOrderMakerAssetData.assetProxyId === AssetProxyId.ERC721) {
                 // HACK: to conform ERC721 orders to the output of market operation utils, assumes complete fillable
                 resultOrders = prunedOrders.map(o =>
-                    CreateOrderUtils.convertNativeOrderToFullyFillableOptimizedOrders(o),
+                    convertNativeOrderToFullyFillableOptimizedOrders(o),
                 );
             } else {
                 if (operation === MarketOperation.Buy) {
@@ -464,7 +464,7 @@ function getTakerAssetAmountBreakDown(
     order: SignedOrderWithFillableAmounts,
     takerAssetAmountWithFees: BigNumber,
 ): { feeTakerAssetAmount: BigNumber; takerAssetAmount: BigNumber } {
-    if (utils.isOrderTakerFeePayableWithTakerAsset(order)) {
+    if (isOrderTakerFeePayableWithTakerAsset(order)) {
         const adjustedTakerAssetAmount = order.takerAssetAmount.plus(order.takerFee);
         const filledRatio = takerAssetAmountWithFees.div(adjustedTakerAssetAmount);
         const takerAssetAmount = filledRatio.multipliedBy(order.takerAssetAmount).integerValue(BigNumber.ROUND_CEIL);
@@ -472,7 +472,7 @@ function getTakerAssetAmountBreakDown(
             takerAssetAmount,
             feeTakerAssetAmount: takerAssetAmountWithFees.minus(takerAssetAmount),
         };
-    } else if (utils.isOrderTakerFeePayableWithMakerAsset(order)) {
+    } else if (isOrderTakerFeePayableWithMakerAsset(order)) {
         if (takerAssetAmountWithFees.isZero()) {
             return {
                 takerAssetAmount: constants.ZERO_AMOUNT,

@@ -59,7 +59,6 @@ export interface DexSample {
 export enum FillFlags {
     ConflictsWithKyber = 0x1,
     Kyber = 0x2,
-    Knapsack = 0x4,
 }
 
 /**
@@ -72,8 +71,12 @@ export interface Fill {
     input: BigNumber;
     // Output fill amount (maker asset amount in a sell, taker asset amount in a buy).
     output: BigNumber;
-    // Output penalty for this fill.
-    fillPenalty: BigNumber;
+    // The maker/taker rate.
+    rate: BigNumber;
+    // The maker/taker rate, adjusted by fees.
+    adjustedRate: BigNumber;
+    // The output fill amount, ajdusted by fees.
+    adjustedOutput: BigNumber;
     // Fill that must precede this one. This enforces certain fills to be contiguous.
     parent?: Fill;
     // Data associated with this this Fill object. Used to reconstruct orders
@@ -132,15 +135,6 @@ export interface GetMarketOrdersOpts {
      */
     excludedSources: ERC20BridgeSource[];
     /**
-     * Whether to prevent mixing Kyber orders with Uniswap and Eth2Dai orders.
-     */
-    noConflicts: boolean;
-    /**
-     * Complexity limit on the search algorithm, i.e., maximum number of
-     * nodes to visit. Default is 1024.
-     */
-    runLimit: number;
-    /**
      * When generating bridge orders, we use
      * sampled rate * (1 - bridgeSlippage)
      * as the rate for calculating maker/taker asset amounts.
@@ -154,11 +148,6 @@ export interface GetMarketOrdersOpts {
      */
     numSamples: number;
     /**
-     * Dust amount, as a fraction of the fill amount.
-     * Default is 0.01 (100 basis points).
-     */
-    dustFractionThreshold: number;
-    /**
      * The exponential sampling distribution base.
      * A value of 1 will result in evenly spaced samples.
      * > 1 will result in more samples at lower sizes.
@@ -170,4 +159,9 @@ export interface GetMarketOrdersOpts {
      * Fees for each liquidity source, expressed in gas.
      */
     fees: { [source: string]: BigNumber };
+    /**
+     * Whether to pad the quote with a redundant fallback quote using different
+     * sources.
+     */
+    allowFallback: boolean;
 }
